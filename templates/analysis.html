@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block title %}{{ report.teams | join(' vs ') }} - Match Analysis{% endblock %}
+
+{% block content %}
+{% set t1 = report.teams[0] if report.teams|length > 0 else 'Team A' %}
+{% set t2 = report.teams[1] if report.teams|length > 1 else 'Team B' %}
+{% set tc1 = report.team_comparison.get(t1, {}) %}
+{% set tc2 = report.team_comparison.get(t2, {}) %}
+
+<!-- Scoreboard Header -->
+<div class="card p-0 mb-6 overflow-hidden">
+    <div class="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-8 py-8">
+        <div class="flex items-center justify-between mb-2">
+            <a href="/" class="text-slate-400 hover:text-white text-xs transition flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Dashboard
+            </a>
+            <span class="text-slate-500 text-xs">{{ report.sport | title }} &middot; {{ report.duration_minutes | int }} min &middot; ID {{ report.match_id }}</span>
+        </div>
+
+        <!-- Score Display -->
+        <div class="flex items-center justify-center gap-8 my-4">
+            <div class="text-right flex-1">
+                <div class="text-white text-2xl font-bold">{{ t1 }}</div>
+            </div>
+            <div class="flex items-center gap-4">
+                <span class="score-box text-brand-400">{{ tc1.get('scoring_events', 0) }}</span>
+                <span class="score-divider">:</span>
+                <span class="score-box text-red-400">{{ tc2.get('scoring_events', 0) }}</span>
+            </div>
+            <div class="text-left flex-1">
+                <div class="text-white text-2xl font-bold">{{ t2 }}</div>
+            </div>
+        </div>
+
+        <!-- Quick Stats Row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+            {% if tc1.get('xg') is defined and tc1.get('xg') %}
+            <div class="text-center">
+                <div class="text-slate-500 text-[10px] uppercase tracking-widest font-semibold">xG</div>
+                <div class="text-white font-bold mt-0.5">{{ tc1.get('xg', '-') }} - {{ tc2.get('xg', '-') }}</div>
+            </div>
+            {% endif %}
+            <div class="text-center">
+                <div class="text-slate-500 text-[10px] uppercase tracking-widest font-semibold">Shots on Target</div>
+                <div class="text-white font-bold mt-0.5">{{ tc1.get('shots_on_target', tc1.get('pressure_events', '-')) }} - {{ tc2.get('shots_on_target', tc2.get('pressure_events', '-')) }}</div>
+            </div>
+            {% if tc1.get('pass_completion') %}
+            <div class="text-center">
+                <div class="text-slate-500 text-[10px] uppercase tracking-widest font-semibold">Pass Accuracy</div>
+                <div class="text-white font-bold mt-0.5">{{ tc1.get('pass_completion', '-') }} - {{ tc2.get('pass_completion', '-') }}</div>
+            </div>
+            {% endif %}
+            {% if tc1.get('ppda') is defined and tc1.get('ppda') %}
+            <div class="text-center">
+                <div class="text-slate-500 text-[10px] uppercase tracking-widest font-semibold">PPDA (Pressing)</div>
+                <div class="text-white font-bold mt-0.5">{{ tc1.get('ppda', '-') }} - {{ tc2.get('ppda', '-') }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Executive Summary -->
+    <div class="px-8 py-4 bg-slate-50 border-t">
+        <p class="text-sm text-slate-600 leading-relaxed">{{ report.summary }}</p>
+    </div>
+</div>
+
+<!-- Chart Tabs -->
+<div class="card mb-6 overflow-hidden">
+    <div class="flex gap-1 p-2 bg-slate-100/80 overflow-x-auto" id="tabs">
+        <button class="tab-btn tab-active px-5 py-2.5 text-sm whitespace-nowrap" onclick="showTab('momentum', this)">Momentum</button>
+        <button class="tab-btn px-5 py-2.5 text-sm text-slate-500 whitespace-nowrap" onclick="showTab('scoring', this)">Scoring</button>
+        <button class="tab-btn px-5 py-2.5 text-sm text-slate-500 whitespace-nowrap" onclick="showTab('teams', this)">Comparison</button>
+        <button class="tab-btn px-5 py-2.5 text-sm text-slate-500 whitespace-nowrap" onclick="showTab('xg', this)">xG Analysis</button>
+        <button class="tab-btn px-5 py-2.5 text-sm text-slate-500 whitespace-nowrap" onclick="showTab('heatmap', this)">Event Map</button>
+        <button class="tab-btn px-5 py-2.5 text-sm text-slate-500 whitespace-nowrap" onclick="showTab('passnet', this)">Pass Network</button>
+    </div>
+
+    <div class="p-5">
+        <div id="panel-momentum" class="tab-panel"><div id="chart-momentum" style="min-height:400px"></div></div>
+        <div id="panel-scoring" class="tab-panel hidden"><div id="chart-scoring" style="min-height:350px"></div></div>
+        <div id="panel-teams" class="tab-panel hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div id="chart-radar" style="min-height:400px"></div>
+                <div id="chart-pressure" style="min-height:400px"></div>
+            </div>
+        </div>
+        <div id="panel-xg" class="tab-panel hidden"><div id="chart-xg" style="min-height:350px"></div></div>
+        <div id="panel-heatmap" class="tab-panel hidden"><div id="chart-heatmap" style="min-height:400px"></div></div>
+        <div id="panel-passnet" class="tab-panel hidden"><div id="chart-passnet" style="min-height:400px"></div></div>
+    </div>
+</div>
+
+<!-- Two Column: Key Moments + Team Comparison -->
+<div class="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
+
+    <!-- Key Moments Timeline -->
+    <div class="lg:col-span-3 card p-6">
+        <h2 class="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Key Moments
+            <span class="text-xs font-normal text-slate-400 ml-auto">{{ report.key_moments | length }} events detected</span>
+        </h2>
+        <div class="space-y-1.5 max-h-[480px] overflow-y-auto pr-2" id="momentsList">
+            {% for m in report.key_moments %}
+            {% if m.severity in ['critical', 'high'] or m.type in ['game_changer', 'defensive_collapse', 'scoring_run', 'momentum_shift', 'xg_overperformance', 'progressive_play'] %}
+            <div class="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 transition insight-card">
+                <div class="moment-dot dot-{{ m.severity }}"></div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-0.5">
+                        <span class="text-xs font-bold text-slate-900">{{ m.minute | int }}'</span>
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide
+                            {% if m.type == 'game_changer' %}badge-momentum
+                            {% elif m.type in ['critical_mistake','defensive_collapse'] %}bg-red-50 text-red-700
+                            {% elif m.type in ['pressure_sequence','pressing_phase'] %}badge-tactical
+                            {% elif m.type == 'scoring_run' %}badge-momentum
+                            {% else %}bg-slate-100 text-slate-600{% endif %}">
+                            {{ m.type.replace('_', ' ') }}
+                        </span>
+                        {% if m.team %}<span class="text-[10px] text-slate-400">{{ m.team }}</span>{% endif %}
+                    </div>
+                    <p class="text-sm text-slate-600 leading-snug">{{ m.description[:150] }}</p>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        <button onclick="toggleAllMoments()" id="showAllBtn" class="mt-3 text-xs text-brand-600 hover:text-brand-800 font-medium">Show all {{ report.key_moments | length }} moments</button>
+    </div>
+
+    <!-- Team Comparison -->
+    <div class="lg:col-span-2 card p-6">
+        <h2 class="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-field-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            Head to Head
+        </h2>
+
+        {% if report.team_comparison %}
+        <div class="space-y-3">
+            {% set display_metrics = [
+                ('scoring_events', 'Goals', true),
+                ('xg', 'Expected Goals (xG)', true),
+                ('shots_on_target', 'Shots on Target', true),
+                ('pass_completion', 'Pass Accuracy', true),
+                ('pressure_events', 'Attacking Actions', true),
+                ('ppda', 'PPDA (lower = more pressing)', false),
+                ('turnovers', 'Recoveries', true),
+                ('mistakes', 'Errors', false),
+            ] %}
+
+            {% for key, label, higher_better in display_metrics %}
+            {% set v1 = tc1.get(key) %}
+            {% set v2 = tc2.get(key) %}
+            {% if v1 is defined and v1 is not none and v1 != 0 and v1 != '' %}
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="font-semibold text-brand-600">{{ v1 }}</span>
+                    <span class="text-slate-400 font-medium">{{ label }}</span>
+                    <span class="font-semibold text-red-500">{{ v2 }}</span>
+                </div>
+                {% set v1_num = v1 | float(default=0) if v1 is not string else 0 %}
+                {% set v2_num = v2 | float(default=0) if v2 is not string else 0 %}
+                {% set total = v1_num + v2_num if (v1_num + v2_num) > 0 else 1 %}
+                <div class="flex h-2 rounded-full overflow-hidden bg-slate-100 gap-0.5">
+                    <div class="bg-brand-400 rounded-l-full transition-all" style="width:{{ (v1_num / total * 100) | int }}%"></div>
+                    <div class="bg-red-400 rounded-r-full transition-all" style="width:{{ (v2_num / total * 100) | int }}%"></div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Player Highlights -->
+{% if report.player_highlights %}
+<div class="card p-6 mb-6">
+    <h2 class="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
+        <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+        Player Spotlight
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for p in report.player_highlights %}
+        <div class="border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="font-bold text-slate-900 text-sm">{{ p.player.split(' ')[-1] if ' ' in p.player else p.player }}</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">{{ p.team }}</p>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide
+                    {% if p.highlight == 'top_scorer' %}bg-green-100 text-green-700
+                    {% elif p.highlight == 'error_prone' %}bg-red-100 text-red-700
+                    {% else %}bg-blue-100 text-blue-700{% endif %}">
+                    {% if p.highlight == 'top_scorer' %}Top Scorer
+                    {% elif p.highlight == 'error_prone' %}High Error Rate
+                    {% elif p.highlight == 'most_active' %}Most Involved
+                    {% else %}{{ p.highlight.replace('_', ' ') }}{% endif %}
+                </span>
+            </div>
+            <p class="text-xs text-slate-500 mt-2 leading-relaxed">{{ p.detail }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Actionable Insights -->
+{% if report.insights %}
+<div class="card p-6 mb-6">
+    <h2 class="text-base font-bold text-slate-900 mb-1 flex items-center gap-2">
+        <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        Tactical Insights
+    </h2>
+    <p class="text-xs text-slate-400 mb-5">Sorted by impact. Each insight includes an actionable recommendation.</p>
+
+    <!-- Insight Filters -->
+    <div class="flex gap-2 mb-5 flex-wrap">
+        <button onclick="filterInsights('all')" class="insight-filter active text-xs px-3 py-1.5 rounded-full bg-slate-900 text-white font-medium">All</button>
+        <button onclick="filterInsights('critical')" class="insight-filter text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-medium hover:bg-red-50 hover:text-red-700">Critical</button>
+        <button onclick="filterInsights('high')" class="insight-filter text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-medium hover:bg-orange-50 hover:text-orange-700">High</button>
+        <button onclick="filterInsights('medium')" class="insight-filter text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-medium hover:bg-yellow-50 hover:text-yellow-700">Medium</button>
+    </div>
+
+    <div class="space-y-3" id="insightsList">
+        {% for ins in report.insights[:20] %}
+        <div class="insight-item insight-card border rounded-xl p-4 hover:shadow-md transition-all" data-impact="{{ ins.impact }}" data-category="{{ ins.category }}">
+            <div class="flex items-start gap-3">
+                <div class="mt-0.5">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full
+                        {% if ins.impact == 'critical' %}bg-red-500
+                        {% elif ins.impact == 'high' %}bg-orange-500
+                        {% elif ins.impact == 'medium' %}bg-amber-500
+                        {% else %}bg-green-500{% endif %}"></span>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide severity-{{ ins.impact }}">{{ ins.impact }}</span>
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide badge-{{ ins.category }}">{{ ins.category }}</span>
+                        {% if ins.team %}<span class="text-[11px] text-slate-400 font-medium">{{ ins.team }}</span>{% endif %}
+                        {% if ins.timestamp %}<span class="text-[11px] text-slate-300">{{ ins.timestamp | int }}'</span>{% endif %}
+                    </div>
+                    <h3 class="font-semibold text-slate-900 text-sm">{{ ins.title }}</h3>
+                    <p class="text-sm text-slate-600 mt-1 leading-relaxed">{{ ins.description }}</p>
+                    <div class="mt-2 flex items-start gap-2 bg-brand-50 rounded-lg p-2.5">
+                        <svg class="w-4 h-4 text-brand-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                        <p class="text-xs text-brand-700 leading-relaxed">{{ ins.recommendation }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Top Recommendations -->
+{% if report.recommendations %}
+<div class="glass rounded-2xl p-6 mb-6">
+    <h2 class="text-base font-bold text-white mb-4 flex items-center gap-2">
+        <svg class="w-5 h-5 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Coach's Takeaways
+    </h2>
+    <div class="space-y-3">
+        {% for rec in report.recommendations %}
+        <div class="flex items-start gap-3">
+            <span class="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-white text-xs font-bold shrink-0">{{ loop.index }}</span>
+            <p class="text-sm text-slate-300 leading-relaxed">{{ rec }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const charts = {{ report.get('charts', {}) | tojson }};
+
+function renderChart(divId, chartJson) {
+    if (!chartJson) return;
+    try {
+        const data = JSON.parse(chartJson);
+        data.layout = data.layout || {};
+        data.layout.paper_bgcolor = 'rgba(0,0,0,0)';
+        data.layout.plot_bgcolor = 'rgba(0,0,0,0)';
+        data.layout.font = { family: 'Inter, system-ui, sans-serif', size: 12, color: '#475569' };
+        data.layout.margin = data.layout.margin || { t: 40, r: 20, b: 40, l: 50 };
+        Plotly.react(divId, data.data, data.layout, { responsive: true, displayModeBar: false });
+    } catch(e) {
+        console.error('Chart error:', divId, e);
+    }
+}
+
+function showTab(name, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('tab-active'); b.classList.add('text-slate-500'); });
+    document.getElementById('panel-' + name).classList.remove('hidden');
+    btn.classList.add('tab-active');
+    btn.classList.remove('text-slate-500');
+}
+
+function filterInsights(level) {
+    document.querySelectorAll('.insight-filter').forEach(b => { b.className = 'insight-filter text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 font-medium'; });
+    event.target.className = 'insight-filter text-xs px-3 py-1.5 rounded-full bg-slate-900 text-white font-medium';
+    document.querySelectorAll('.insight-item').forEach(el => {
+        if (level === 'all' || el.dataset.impact === level) {
+            el.style.display = '';
+        } else {
+            el.style.display = 'none';
+        }
+    });
+}
+
+let allMomentsShown = false;
+function toggleAllMoments() {
+    const list = document.getElementById('momentsList');
+    const btn = document.getElementById('showAllBtn');
+    allMomentsShown = !allMomentsShown;
+    // Rebuild with all items visible
+    list.style.maxHeight = allMomentsShown ? 'none' : '480px';
+    btn.textContent = allMomentsShown ? 'Show key moments only' : 'Show all {{ report.key_moments | length }} moments';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (charts.momentum_timeline) renderChart('chart-momentum', charts.momentum_timeline);
+    if (charts.scoring_timeline) renderChart('chart-scoring', charts.scoring_timeline);
+    if (charts.team_radar) renderChart('chart-radar', charts.team_radar);
+    if (charts.pressure_over_time) renderChart('chart-pressure', charts.pressure_over_time);
+    if (charts.xg_timeline) renderChart('chart-xg', charts.xg_timeline);
+    if (charts.event_heatmap) renderChart('chart-heatmap', charts.event_heatmap);
+    if (charts.pass_network) renderChart('chart-passnet', charts.pass_network);
+});
+</script>
+{% endblock %}
