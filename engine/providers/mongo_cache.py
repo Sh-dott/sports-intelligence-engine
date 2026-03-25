@@ -13,10 +13,7 @@ from typing import Optional
 import pandas as pd
 from pymongo import MongoClient
 
-MONGO_URI = os.environ.get(
-    "MONGODB_URI",
-    "REDACTED"
-)
+MONGO_URI = os.environ.get("MONGODB_URI", "")
 
 _client: Optional[MongoClient] = None
 _db = None
@@ -26,6 +23,8 @@ def _get_db():
     """Lazy-init MongoDB connection."""
     global _client, _db
     if _db is None:
+        if not MONGO_URI:
+            return None
         try:
             _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
             _db = _client["sports_intel"]
