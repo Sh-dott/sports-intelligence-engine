@@ -39,3 +39,9 @@ try:
     register_provider("nba", NBAProvider)
 except ImportError:
     pass
+
+try:
+    from engine.providers.footballdata import FootballDataProvider
+    register_provider("football-data", FootballDataProvider)
+except ImportError:
+    pass
