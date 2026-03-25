@@ -31,7 +31,10 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Dashboard home page."""
-    recent = list_analyses()[:10]
+    try:
+        recent = list_analyses()[:10]
+    except Exception:
+        recent = []
     providers = list_providers()
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -160,6 +163,22 @@ async def api_season(request: Request):
         return JSONResponse(content=result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug")
+async def debug(request: Request):
+    """Debug route to test template rendering."""
+    import traceback
+    try:
+        recent = list_analyses()[:10]
+        providers = list_providers()
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "recent_analyses": recent,
+            "providers": providers,
+        })
+    except Exception:
+        return JSONResponse(content={"error": traceback.format_exc()}, status_code=500)
 
 
 @app.get("/health")
