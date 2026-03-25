@@ -25,7 +25,24 @@ app = FastAPI(title="Sports Intelligence Engine", version="1.0.0")
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+from jinja2 import Environment, FileSystemLoader
+_jinja_env = Environment(loader=FileSystemLoader(str(BASE_DIR / "templates")), autoescape=True)
+_jinja_env.policies["json.dumps_kwargs"] = {"default": str}
+
+def _tojson_filter(value):
+    import json as _json
+    return _json.dumps(value, default=str)
+
+_jinja_env.filters["tojson"] = _tojson_filter
+
+
+def render_template(name: str, request: Request, context: dict = None):
+    """Render a Jinja2 template manually to avoid Starlette compatibility issues."""
+    template = _jinja_env.get_template(name)
+    ctx = context or {}
+    ctx["request"] = request
+    html = template.render(**ctx)
+    return HTMLResponse(content=html)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -36,8 +53,7 @@ async def home(request: Request):
     except Exception:
         recent = []
     providers = list_providers()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return render_template("index.html", request, {
         "recent_analyses": recent,
         "providers": providers,
     })
@@ -130,8 +146,7 @@ async def view_analysis(request: Request, analysis_id: str):
     data = load_analysis(analysis_id)
     if not data:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    return templates.TemplateResponse("analysis.html", {
-        "request": request,
+    return render_template("analysis.html", request, {
         "report": data,
         "analysis_id": analysis_id,
     })
@@ -172,8 +187,7 @@ async def debug(request: Request):
     try:
         recent = list_analyses()[:10]
         providers = list_providers()
-        return templates.TemplateResponse("index.html", {
-            "request": request,
+        return render_template("index.html", request, {
             "recent_analyses": recent,
             "providers": providers,
         })
