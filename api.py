@@ -1,6 +1,7 @@
 """
 Sports Intelligence Engine -- Web API
 FastAPI backend serving match analysis with interactive Plotly dashboard.
+MongoDB Atlas caching for instant responses.
 """
 
 import json
@@ -9,7 +10,6 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from engine.ingestion import load_match_data
 from engine.processing import process_match
@@ -20,14 +20,17 @@ from engine.clustering import PatternAnalyzer
 from engine.visualization_plotly import generate_all_plotly
 from engine.storage import save_analysis, load_analysis, list_analyses
 from engine.providers import get_provider, list_providers
+from engine.providers import mongo_cache
 
-app = FastAPI(title="Sports Intelligence Engine", version="1.0.0")
+app = FastAPI(title="Sports Intelligence Engine", version="2.0.0")
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
 from jinja2 import Environment, FileSystemLoader
 _jinja_env = Environment(loader=FileSystemLoader(str(BASE_DIR / "templates")), autoescape=True)
 _jinja_env.policies["json.dumps_kwargs"] = {"default": str}
+
 
 def _tojson_filter(value):
     import json as _json
@@ -37,37 +40,43 @@ _jinja_env.filters["tojson"] = _tojson_filter
 
 
 def render_template(name: str, request: Request, context: dict = None):
-    """Render a Jinja2 template manually to avoid Starlette compatibility issues."""
     template = _jinja_env.get_template(name)
     ctx = context or {}
     ctx["request"] = request
-    html = template.render(**ctx)
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=template.render(**ctx))
+
+
+# Only expose clean provider names to the UI
+UI_PROVIDERS = {
+    "football": "Football (All Leagues & Tournaments)",
+    "nba": "Basketball (NBA)",
+}
 
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Dashboard home page."""
+    # Use MongoDB for recent analyses
     try:
-        recent = list_analyses()[:10]
+        recent = mongo_cache.list_cached_analyses(10)
     except Exception:
-        recent = []
-    providers = list_providers()
+        try:
+            recent = list_analyses()[:10]
+        except Exception:
+            recent = []
+
     return render_template("index.html", request, {
         "recent_analyses": recent,
-        "providers": providers,
+        "providers": UI_PROVIDERS,
     })
 
 
 @app.get("/api/providers")
 async def api_providers():
-    """List available data providers."""
-    return {"providers": list_providers()}
+    return {"providers": UI_PROVIDERS}
 
 
 @app.get("/api/competitions")
 async def api_competitions(provider: str):
-    """List competitions for a provider."""
     try:
         p = get_provider(provider)
         comps = p.list_competitions()
@@ -78,7 +87,6 @@ async def api_competitions(provider: str):
 
 @app.get("/api/matches")
 async def api_matches(provider: str, competition: str, season: str = None):
-    """List matches for a competition/season."""
     try:
         p = get_provider(provider)
         matches = p.list_matches(competition_id=competition, season_id=season)
@@ -89,7 +97,6 @@ async def api_matches(provider: str, competition: str, season: str = None):
 
 @app.post("/api/analyze")
 async def api_analyze(request: Request):
-    """Run full analysis pipeline and return results."""
     body = await request.json()
     provider_name = body.get("provider")
     match_id = body.get("match_id")
@@ -98,12 +105,16 @@ async def api_analyze(request: Request):
         raise HTTPException(status_code=400, detail="provider and match_id required")
 
     try:
-        # Fetch data
+        # Check MongoDB for cached analysis (instant!)
+        cached = mongo_cache.get_cached_analysis(provider_name, match_id)
+        if cached:
+            return JSONResponse(content=cached)
+
+        # Fetch and analyze
         provider = get_provider(provider_name)
         df = provider.get_match_events(match_id)
         sport = provider.get_sport()
 
-        # Run pipeline
         processed_df = load_match_data(df, sport=sport)
         ctx = process_match(processed_df)
 
@@ -117,13 +128,14 @@ async def api_analyze(request: Request):
         report = generator.generate_report()
         report_dict = json.loads(report_to_json(report))
 
-        # Generate Plotly charts
         charts = generate_all_plotly(ctx, detected)
         report_dict["charts"] = charts
 
-        # Store result
         analysis_id = save_analysis(report_dict)
         report_dict["analysis_id"] = analysis_id
+
+        # Cache in MongoDB for instant future loads
+        mongo_cache.cache_analysis(provider_name, match_id, report_dict)
 
         return JSONResponse(content=report_dict)
 
@@ -133,7 +145,6 @@ async def api_analyze(request: Request):
 
 @app.get("/api/analysis/{analysis_id}")
 async def api_get_analysis(analysis_id: str):
-    """Retrieve stored analysis."""
     data = load_analysis(analysis_id)
     if not data:
         raise HTTPException(status_code=404, detail="Analysis not found")
@@ -142,7 +153,6 @@ async def api_get_analysis(analysis_id: str):
 
 @app.get("/analysis/{analysis_id}", response_class=HTMLResponse)
 async def view_analysis(request: Request, analysis_id: str):
-    """Render analysis page."""
     data = load_analysis(analysis_id)
     if not data:
         raise HTTPException(status_code=404, detail="Analysis not found")
@@ -154,13 +164,14 @@ async def view_analysis(request: Request, analysis_id: str):
 
 @app.get("/api/recent")
 async def api_recent():
-    """List recent analyses."""
-    return JSONResponse(content=list_analyses()[:20])
+    try:
+        return JSONResponse(content=mongo_cache.list_cached_analyses(20))
+    except Exception:
+        return JSONResponse(content=list_analyses()[:20])
 
 
 @app.post("/api/season")
 async def api_season(request: Request):
-    """Run season-level multi-match analysis."""
     from engine.multi_match import analyze_season, season_to_json
 
     body = await request.json()
@@ -180,21 +191,6 @@ async def api_season(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/debug")
-async def debug(request: Request):
-    """Debug route to test template rendering."""
-    import traceback
-    try:
-        recent = list_analyses()[:10]
-        providers = list_providers()
-        return render_template("index.html", request, {
-            "recent_analyses": recent,
-            "providers": providers,
-        })
-    except Exception:
-        return JSONResponse(content={"error": traceback.format_exc()}, status_code=500)
-
-
 @app.get("/health")
 async def health():
-    return {"status": "ok", "providers": list_providers()}
+    return {"status": "ok", "providers": list(UI_PROVIDERS.keys())}
