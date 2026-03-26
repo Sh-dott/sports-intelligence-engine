@@ -44,6 +44,12 @@ except ImportError:
     pass
 
 try:
+    from engine.providers.understat import UnderstatProvider
+    register_provider("understat", UnderstatProvider)
+except ImportError:
+    pass
+
+try:
     from engine.providers.unified import UnifiedFootballProvider
     register_provider("football", UnifiedFootballProvider)
 except ImportError:

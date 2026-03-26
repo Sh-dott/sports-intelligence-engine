@@ -35,6 +35,7 @@ class UnifiedFootballProvider(DataProvider):
     def __init__(self, **kwargs):
         self._sb = None
         self._fd = None
+        self._us = None
 
     def _get_statsbomb(self):
         if self._sb is None:
@@ -47,6 +48,12 @@ class UnifiedFootballProvider(DataProvider):
             from engine.providers.footballdata import FootballDataProvider
             self._fd = FootballDataProvider()
         return self._fd
+
+    def _get_understat(self):
+        if self._us is None:
+            from engine.providers.understat import UnderstatProvider
+            self._us = UnderstatProvider()
+        return self._us
 
     def get_sport(self) -> str:
         return "football"
@@ -75,6 +82,14 @@ class UnifiedFootballProvider(DataProvider):
         except Exception:
             pass
 
+        # Understat competitions (xG data, 6 leagues, 2014-2024)
+        us_comps = pd.DataFrame()
+        try:
+            us_comps = self._get_understat().list_competitions().copy()
+            us_comps["competition_name"] = us_comps["competition_name"].apply(self._normalize_name)
+        except Exception:
+            pass
+
         # Football-Data competitions
         try:
             fd_comps = self._get_footballdata().list_competitions().copy()
@@ -86,7 +101,7 @@ class UnifiedFootballProvider(DataProvider):
         except Exception:
             pass
 
-        frames = [f for f in [sb_comps, fd_comps] if not f.empty]
+        frames = [f for f in [sb_comps, us_comps, fd_comps] if not f.empty]
         if not frames:
             return pd.DataFrame(columns=["competition_id", "competition_name", "season_id",
                                          "season_name", "country", "source", "has_deep_data"])
@@ -153,6 +168,9 @@ class UnifiedFootballProvider(DataProvider):
             if source == "statsbomb":
                 matches = self._get_statsbomb().list_matches(orig_comp, orig_season)
                 matches["source"] = "statsbomb"
+            elif source == "understat":
+                matches = self._get_understat().list_matches(orig_comp, orig_season)
+                matches["source"] = "understat"
             else:
                 matches = self._get_footballdata().list_matches(orig_comp, orig_season)
                 matches["source"] = "football-data"
@@ -171,20 +189,31 @@ class UnifiedFootballProvider(DataProvider):
             return cached
 
         df = None
+        errors = []
 
         # Try StatsBomb first for deep data (their match IDs are 7-digit numbers)
         if source == "statsbomb" or (str(match_id).isdigit() and len(str(match_id)) >= 7):
             try:
                 df = self._get_statsbomb().get_match_events(match_id)
-            except Exception:
-                pass
+            except Exception as e:
+                errors.append(f"StatsBomb: {e}")
+
+        # Try Understat (their match IDs are 4-5 digit numbers)
+        if df is None and (source == "understat" or (str(match_id).isdigit() and len(str(match_id)) <= 6)):
+            try:
+                df = self._get_understat().get_match_events(match_id)
+            except Exception as e:
+                errors.append(f"Understat: {e}")
 
         # Fall back to Football-Data
         if df is None:
             try:
                 df = self._get_footballdata().get_match_events(match_id)
             except Exception as e:
-                raise ValueError(f"Could not fetch match {match_id}: {e}")
+                errors.append(f"Football-Data: {e}")
+
+        if df is None:
+            raise ValueError(f"Could not fetch match {match_id}: {'; '.join(errors)}")
 
         mongo_cache.cache_events("football", match_id, df, "football")
         return df
