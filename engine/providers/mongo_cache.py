@@ -184,12 +184,16 @@ def cache_analysis(provider: str, match_id, report: dict):
 
 
 def list_cached_analyses(limit: int = 20) -> list:
-    """List recent cached analyses."""
+    """List recent cached analyses. Only shows analyses from the last 10 minutes."""
     db = _get_db()
     if db is None:
         return []
+
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+
+    # Clean up old entries from the recent list (keep the analysis data, just hide from recent)
     docs = db["analyses"].find(
-        {},
+        {"created_at": {"$gte": cutoff}},
         {"_id": 0, "analysis_id": 1, "match_id": 1, "sport": 1, "teams": 1, "summary": 1, "created_at": 1}
     ).sort("created_at", -1).limit(limit)
     results = []
