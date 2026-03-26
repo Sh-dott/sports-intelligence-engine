@@ -91,6 +91,9 @@ async def api_matches(provider: str, competition: str, season: str = None):
         p = get_provider(provider)
         matches = p.list_matches(competition_id=competition, season_id=season)
         return JSONResponse(content=matches.to_dict(orient="records"))
+    except ValueError as e:
+        # Return empty list with error info instead of HTTP error (so JS can show it)
+        return JSONResponse(content=[{"match_id": 0, "home_team": str(e), "away_team": "", "match_date": "", "score": ""}])
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

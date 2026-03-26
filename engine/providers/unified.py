@@ -118,17 +118,26 @@ class UnifiedFootballProvider(DataProvider):
 
         comps = self.list_competitions()
 
-        # Find the matching entry to determine source and original IDs
-        mask = comps["competition_name"] == str(competition_id)
+        # Find the matching entry — try multiple lookup strategies
+        row = None
+
+        # 1. Match by competition_name (unified ID) + season_id
+        mask = comps["competition_name"].astype(str) == str(competition_id)
         if season_id:
-            mask = mask & (comps["season_id"].astype(str) == str(season_id))
+            # Match season_id OR season_name (JS may send either)
+            season_mask = (comps["season_id"].astype(str) == str(season_id)) | \
+                          (comps["season_name"].astype(str) == str(season_id))
+            mask = mask & season_mask
 
         match_rows = comps[mask]
+
+        # 2. Fallback: try original_competition_id
         if match_rows.empty:
-            # Try original_competition_id
             mask = comps["original_competition_id"].astype(str) == str(competition_id)
             if season_id:
-                mask = mask & (comps["original_season_id"].astype(str) == str(season_id))
+                season_mask = (comps["original_season_id"].astype(str) == str(season_id)) | \
+                              (comps["season_id"].astype(str) == str(season_id))
+                mask = mask & season_mask
             match_rows = comps[mask]
 
         if match_rows.empty:
@@ -140,15 +149,20 @@ class UnifiedFootballProvider(DataProvider):
         orig_comp = row.get("original_competition_id", competition_id)
         orig_season = row.get("original_season_id", season_id)
 
-        if source == "statsbomb":
-            matches = self._get_statsbomb().list_matches(orig_comp, orig_season)
-            matches["source"] = "statsbomb"
-        else:
-            matches = self._get_footballdata().list_matches(orig_comp, orig_season)
-            matches["source"] = "football-data"
+        try:
+            if source == "statsbomb":
+                matches = self._get_statsbomb().list_matches(orig_comp, orig_season)
+                matches["source"] = "statsbomb"
+            else:
+                matches = self._get_footballdata().list_matches(orig_comp, orig_season)
+                matches["source"] = "football-data"
 
-        mongo_cache.cache_matches("football", competition_id, season_id, matches.to_dict(orient="records"))
-        return matches
+            if not matches.empty:
+                mongo_cache.cache_matches("football", competition_id, season_id, matches.to_dict(orient="records"))
+
+            return matches
+        except Exception as e:
+            raise ValueError(f"Could not load matches: {e}")
 
     def get_match_events(self, match_id, source: str = None) -> pd.DataFrame:
         """Get match events with MongoDB caching for instant repeat loads."""

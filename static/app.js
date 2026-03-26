@@ -95,7 +95,7 @@ async function loadMatches() {
             document.getElementById('analyzeBtn').disabled = !matchSelect.value;
         };
     } catch (e) {
-        matchSelect.innerHTML = '<option value="">Error loading matches</option>';
+        matchSelect.innerHTML = `<option value="">Failed to load - try another season</option>`;
         console.error(e);
     }
 }

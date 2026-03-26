@@ -126,16 +126,13 @@ class FootballDataProvider(DataProvider):
         try:
             data = self._get(f"/competitions/{competition_id}/matches", params=params)
         except requests.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 403:
-                return pd.DataFrame([{
-                    "match_id": 0,
-                    "home_team": "API key required",
-                    "away_team": "Register free at football-data.org",
-                    "match_date": "",
-                    "score_home": 0,
-                    "score_away": 0,
-                    "score": "",
-                }])
+            status = e.response.status_code if e.response is not None else 0
+            if status == 403:
+                raise ValueError(f"Access denied for {competition_id} season {season_id}. Your API key may not cover this competition.")
+            elif status == 429:
+                raise ValueError("Rate limit reached. Please wait a minute and try again.")
+            elif status == 404:
+                raise ValueError(f"No match data found for {competition_id} season {season_id}.")
             raise
 
         matches = data.get("matches", [])
