@@ -19,7 +19,23 @@ BASE_URL = "https://api.football-data.org/v4"
 # Free tier competition codes
 FREE_COMPETITIONS = {
     "PL", "BL1", "SA", "PD", "FL1", "ELC", "DED", "PPL",
-    "CL", "EC", "WC", "CLI", "BSA",
+    "CL", "EC", "CLI", "BSA",
+}
+
+# Verified accessible seasons per competition on free tier
+ACCESSIBLE_SEASONS = {
+    "PL": [2025, 2024, 2023],
+    "BL1": [2025, 2024, 2023],
+    "SA": [2025, 2024, 2023],
+    "PD": [2025, 2024, 2023],
+    "FL1": [2025, 2024, 2023],
+    "ELC": [2025, 2024, 2023],
+    "DED": [2025, 2024, 2023],
+    "PPL": [2025, 2024, 2023],
+    "CL": [2025, 2024, 2023],
+    "EC": [2024],
+    "CLI": [2025, 2024, 2023],
+    "BSA": [2025, 2024, 2023],
 }
 
 
@@ -79,36 +95,20 @@ class FootballDataProvider(DataProvider):
                         "country": country,
                     })
 
-            # Fetch full season list for this competition (needs API key)
-            if self.api_key:
-                try:
-                    comp_data = self._get(f"/competitions/{code}")
-                    for s in comp_data.get("seasons", []):
-                        start = s.get("startDate", "")[:4]
-                        end = s.get("endDate", "")[:4]
-                        if s.get("currentMatchday") or s.get("winner"):
-                            if not any(r["competition_id"] == code and r["season_id"] == start for r in rows):
-                                rows.append({
-                                    "competition_id": code,
-                                    "competition_name": name,
-                                    "season_id": start,
-                                    "season_name": f"{start}/{end}" if end and end != start else start,
-                                    "country": country,
-                                })
-                except Exception:
-                    continue
-            else:
-                # Without API key, generate recent seasons (the API supports them)
-                for year in range(2024, 2014, -1):
-                    yr_str = str(year)
-                    if not any(r["competition_id"] == code and r["season_id"] == yr_str for r in rows):
-                        rows.append({
-                            "competition_id": code,
-                            "competition_name": name,
-                            "season_id": yr_str,
-                            "season_name": f"{year}/{year+1}" if comp.get("type") == "LEAGUE" else str(year),
-                            "country": country,
-                        })
+            # Free tier: only recent 2-3 seasons are accessible per competition
+            # Show only what's actually available to avoid errors
+            accessible_years = ACCESSIBLE_SEASONS.get(code, [2024, 2023])
+            is_league = comp.get("type") == "LEAGUE"
+            for year in accessible_years:
+                yr_str = str(year)
+                if not any(r["competition_id"] == code and r["season_id"] == yr_str for r in rows):
+                    rows.append({
+                        "competition_id": code,
+                        "competition_name": name,
+                        "season_id": yr_str,
+                        "season_name": f"{year}/{year+1}" if is_league else str(year),
+                        "country": country,
+                    })
 
         if not rows:
             return pd.DataFrame(columns=["competition_id", "competition_name", "season_id", "season_name", "country"])
