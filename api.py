@@ -146,9 +146,25 @@ async def api_analyze(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _find_analysis(analysis_id: str) -> dict | None:
+    """Try MongoDB first, then local file storage."""
+    # MongoDB
+    try:
+        db = mongo_cache._get_db()
+        if db is not None:
+            doc = db["analyses"].find_one({"analysis_id": analysis_id})
+            if doc:
+                doc.pop("_id", None)
+                return doc.get("report", doc)
+    except Exception:
+        pass
+    # Local file fallback
+    return load_analysis(analysis_id)
+
+
 @app.get("/api/analysis/{analysis_id}")
 async def api_get_analysis(analysis_id: str):
-    data = load_analysis(analysis_id)
+    data = _find_analysis(analysis_id)
     if not data:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return JSONResponse(content=data)
@@ -156,7 +172,7 @@ async def api_get_analysis(analysis_id: str):
 
 @app.get("/analysis/{analysis_id}", response_class=HTMLResponse)
 async def view_analysis(request: Request, analysis_id: str):
-    data = load_analysis(analysis_id)
+    data = _find_analysis(analysis_id)
     if not data:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return render_template("analysis.html", request, {
